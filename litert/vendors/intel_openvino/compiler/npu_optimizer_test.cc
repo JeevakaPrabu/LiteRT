@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <vector>
@@ -36,6 +37,7 @@
 #include "openvino/op/gather.hpp"
 #include "openvino/op/gelu.hpp"
 #include "openvino/op/matmul.hpp"
+#include "openvino/op/maximum.hpp"
 #include "openvino/op/multiply.hpp"
 #include "openvino/op/parameter.hpp"
 #include "openvino/op/reduce_sum.hpp"
@@ -260,6 +262,57 @@ TEST(FuseSplitAttentionToSDPATest, NumericallyMatchesSplitCache) {
   }
   EXPECT_LT(max_abs_diff, 1e-4f)
       << "fused output diverges from split-cache reference";
+}
+
+// A mask that is -inf over the whole cache segment must not turn the fused
+// output into NaN. s_past=7, s_cur=1 also makes the fusion pad the KV axis.
+// CPU SDPA tolerates -inf, so the Maximum check is what pins the clamp.
+TEST(FuseSplitAttentionToSDPATest, ClampsInfiniteMaskToFiniteFloor) {
+  constexpr int64_t kSPast = 7;
+  auto reference = BuildSplitCacheAttention(kSPast, /*s_cur=*/1);
+  auto fused = reference->clone();
+
+  NpuOptimizer()
+      .SetCastIntegerSignToFloat(false)
+      .SetFuseSplitAttentionToSDPA(true)
+      .Run(fused);
+  ASSERT_NE(FindSdpa(fused), nullptr) << "fusion did not fire";
+  EXPECT_EQ(CountOps<ov::op::v1::Maximum>(fused), 1u)
+      << "mask is not clamped before SDPA";
+
+  ov::Core core;
+  auto ref_req = core.compile_model(reference, "CPU").create_infer_request();
+  auto fused_req = core.compile_model(fused, "CPU").create_infer_request();
+
+  // Inputs are ordered {q, k_cache, k_slice, v_cache, v_slice, mask}.
+  constexpr size_t kMaskInput = 5;
+  const size_t num_inputs = reference->inputs().size();
+  ASSERT_EQ(num_inputs, fused->inputs().size());
+  for (size_t i = 0; i < num_inputs; ++i) {
+    const auto& port = reference->input(i);
+    ov::Tensor t(port.get_element_type(), port.get_shape());
+    FillRandom(t, static_cast<uint32_t>(i + 1));
+    if (i == kMaskInput) {
+      auto* mask = t.data<float>();
+      std::fill(mask, mask + t.get_size(), 0.0f);
+      std::fill(mask, mask + kSPast, -std::numeric_limits<float>::infinity());
+    }
+    ref_req.set_input_tensor(i, t);
+    fused_req.set_input_tensor(i, t);
+  }
+
+  ref_req.infer();
+  fused_req.infer();
+
+  auto ref_out = ref_req.get_output_tensor(0);
+  auto fused_out = fused_req.get_output_tensor(0);
+  ASSERT_EQ(ref_out.get_size(), fused_out.get_size());
+  const auto* a = ref_out.data<float>();
+  const auto* b = fused_out.data<float>();
+  for (size_t i = 0; i < ref_out.get_size(); ++i) {
+    ASSERT_FALSE(std::isnan(b[i])) << "fused output has NaN at " << i;
+    EXPECT_NEAR(a[i], b[i], 1e-4f) << "mismatch at " << i;
+  }
 }
 
 // Fixed per-expert weight shapes used by BuildDenseMoeGraph: a fused gate+up

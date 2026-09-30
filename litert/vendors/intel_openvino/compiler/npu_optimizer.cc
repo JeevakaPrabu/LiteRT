@@ -48,6 +48,7 @@
 #include "openvino/op/gather.hpp"
 #include "openvino/op/gelu.hpp"
 #include "openvino/op/matmul.hpp"
+#include "openvino/op/maximum.hpp"
 #include "openvino/op/multiply.hpp"
 #include "openvino/op/pad.hpp"
 #include "openvino/op/reduce_sum.hpp"
@@ -81,9 +82,10 @@ namespace {
 // to be a multiple of this alignment.
 constexpr int64_t kSdpaKvSeqAlignment = 16;
 
-// Additive-mask sentinel used for padded key positions. Value taken from
-// Gemma models.
-constexpr float kSdpaPadMaskBias = -100.0f;
+// Finite mask floor; an all -inf flash-attention tile would yield NaN.
+constexpr float kSdpaMaskFloor = -3e4f;
+static_assert(kSdpaMaskFloor > -65504.0f, "Must stay finite in fp16.");
+constexpr float kSdpaPadMaskBias = kSdpaMaskFloor;
 
 // Returns true if |output| feeds exactly one consumer input.
 bool HasSingleConsumer(const ov::Output<ov::Node>& output) {
@@ -433,17 +435,21 @@ FuseSplitAttentionToSDPA::FuseSplitAttentionToSDPA(bool pad_kv_to_alignment) {
       new_nodes.push_back(val_out.get_node_shared_ptr());
     }
 
-    // Mask. Its KV axis (-1) must match the (possibly padded) KV length, so
-    // pad it by the same amount with a large finite negative bias to mask
-    // the padded positions in softmax (kSdpaPadMaskBias is -3e4: small enough
-    // that exp underflows, large enough that fp16 stays finite, avoiding
-    // NaN in flash-attention tile rescaling).
     const int64_t mask_rank =
         mask_value.get_partial_shape().rank().is_static()
             ? mask_value.get_partial_shape().rank().get_length()
             : 4;
-    ov::Output<ov::Node> attn_mask = PadEndOfAxis(
-        mask_value, mask_rank, /*axis=*/-1, kv_pad, kSdpaPadMaskBias);
+    auto mask_floor =
+        ov::op::v0::Constant::create(mask_value.get_element_type(), ov::Shape{},
+                                     std::vector<float>{kSdpaMaskFloor});
+    auto clamped_mask =
+        std::make_shared<ov::op::v1::Maximum>(mask_value, mask_floor);
+    new_nodes.push_back(mask_floor);
+    new_nodes.push_back(clamped_mask);
+    // The mask's KV axis must match the padded KV length.
+    ov::Output<ov::Node> attn_mask =
+        PadEndOfAxis(clamped_mask->output(0), mask_rank, /*axis=*/-1, kv_pad,
+                     kSdpaPadMaskBias);
     if (kv_pad > 0) {
       new_nodes.push_back(attn_mask.get_node_shared_ptr());
     }
