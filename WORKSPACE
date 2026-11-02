@@ -504,6 +504,8 @@ http_archive(
     patch_cmds = [
         # Add external/ml_drift to flatc include paths for gl_inference_context_cc_fbs.
         "sed -i -e 's|\"-I .\",|\"-I .\", \"-I external/ml_drift\",|g' ml_drift/gl/BUILD",
+        # MSVC rejects `uint32_t x = -1;` as narrowing (C2397) under /std:c++20.
+        "sed -i -E 's/^(  uint32_t api_version[a-z_]*) = -1;/\\1 = UINT32_MAX;/' ml_drift/common/gpu_info.h",
     ],
     repo_mapping = {
         "@fp16": "@FP16",
