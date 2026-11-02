@@ -143,7 +143,52 @@ cc_library(
     deps = [
         ":dawn_native",
         ":webgpu_headers",
+    ] + select({
+        "@platforms//os:windows": [":webgpu_dawn_windows_import"],
+        "//conditions:default": [],
+    }),
+)
+
+# Windows DLLs must resolve wgpu* at link time: build webgpu_dawn.lib from a
+# stub DLL. The real webgpu_dawn.dll must be provided at runtime.
+genrule(
+    name = "generate_webgpu_dawn_stub",
+    srcs = ["include/dawn/webgpu.h"],
+    outs = ["webgpu_dawn_stub.cc"],
+    cmd = "sed -n -E 's/.*WGPU_EXPORT .* (wgpu[A-Za-z0-9_]+)\\(.*/extern \"C\" __declspec(dllexport) void \\1() {}/p' $< > $@",
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_binary(
+    name = "stub/webgpu_dawn.dll",
+    srcs = [":webgpu_dawn_stub.cc"],
+    linkshared = 1,
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+filegroup(
+    name = "webgpu_dawn_interface_lib",
+    srcs = [":stub/webgpu_dawn.dll"],
+    output_group = "interface_library",
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_import(
+    name = "webgpu_dawn_dll_import",
+    interface_library = ":webgpu_dawn_interface_lib",
+    system_provided = 1,
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_library(
+    name = "webgpu_dawn_windows_import",
+    # Delay-load so the accelerator DLL loads even when webgpu_dawn.dll is absent.
+    linkopts = [
+        "/DELAYLOAD:webgpu_dawn.dll",
+        "delayimp.lib",
     ],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [":webgpu_dawn_dll_import"],
 )
 
 cc_library(
