@@ -202,26 +202,37 @@ LiteRtStatus OpenVinoCompileContext::ConfigureForSoc(const char* soc_model) {
 }
 
 void OpenVinoCompileContext::ConfigureForNpuWeightSharing(
-    bool moe_multi_token_chunk) {
+    const std::string& weights_bank_name, bool moe_multi_token_chunk) {
   if (device_ != "NPU") return;
   // NPUW private properties, set by literal key because
   // npuw_private_properties.hpp is not shipped in the runtime SDK.
   // Each knob is only a default: a value already supplied through the Intel
   // OpenVINO configs map is kept.
-  auto set_default_if_not_set = [&](const char* key, const char* default_val) {
+  auto set_default_if_not_set = [&](const char* key, const std::string& val) {
     const auto it = configs_map_.find(key);
     if (it == configs_map_.end()) {
-      configs_map_[key] = default_val;
+      configs_map_[key] = val;
     } else {
       LITERT_LOG(LITERT_INFO,
                  "NPU weight sharing: keeping client-supplied %s = %s "
                  "(default would be %s)",
-                 key, it->second.as<std::string>().c_str(), default_val);
+                 key, it->second.as<std::string>().c_str(), val.c_str());
     }
   };
   set_default_if_not_set("NPU_USE_NPUW", "YES");
   set_default_if_not_set("NPUW_DEVICES", "NPU");
-  set_default_if_not_set("NPUW_WEIGHTS_BANK", "shared");
+  // A client-supplied bank name (configs map) wins. Otherwise use the
+  // caller's content-derived name, falling back to the legacy fixed name only
+  // if none could be derived.
+  if (weights_bank_name.empty()) {
+    LITERT_LOG(LITERT_WARNING,
+               "NPU weight sharing: no weights-bank name derived; falling back "
+               "to the fixed name 'shared'. Models sharing this name in one "
+               "process can collide in NPUW's global weights bank.");
+  }
+  set_default_if_not_set(
+      "NPUW_WEIGHTS_BANK",
+      weights_bank_name.empty() ? std::string("shared") : weights_bank_name);
   set_default_if_not_set("NPUW_FUNCALL_FOR_ALL", "YES");
 
   if (moe_multi_token_chunk) {
@@ -239,8 +250,9 @@ void OpenVinoCompileContext::ConfigureForNpuWeightSharing(
 
   LITERT_LOG(LITERT_INFO,
              "NPU weight sharing: enabled NPUW weightless compile knobs (%s "
-             "chunk pipeline)",
-             moe_multi_token_chunk ? "multi-token" : "single-token");
+             "chunk pipeline, bank '%s')",
+             moe_multi_token_chunk ? "multi-token" : "single-token",
+             configs_map_["NPUW_WEIGHTS_BANK"].as<std::string>().c_str());
 }
 
 OpenVinoCompileContext::OptimizeModelResult

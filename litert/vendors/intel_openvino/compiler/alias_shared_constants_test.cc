@@ -278,6 +278,32 @@ TEST(BuildPoolTest, KeepsEveryBufferWhenNotPruning) {
   EXPECT_EQ(layout.buffers.size(), 2u);
 }
 
+PoolLayout MakeLayout(const std::vector<uint8_t>& a,
+                      const std::vector<uint8_t>& b) {
+  PoolLayout layout;
+  layout.buffers.push_back({0, 0, absl::MakeConstSpan(a)});
+  layout.buffers.push_back({1, a.size(), absl::MakeConstSpan(b)});
+  return layout;
+}
+
+TEST(PoolLayoutWeightsBankNameTest, EmptyPoolYieldsEmptyName) {
+  EXPECT_TRUE(PoolLayout().WeightsBankName().empty());
+}
+
+TEST(PoolLayoutWeightsBankNameTest, IdenticalContentYieldsIdenticalName) {
+  const std::vector<uint8_t> a = {1, 2, 3}, b = {4, 5};
+  const std::vector<uint8_t> a2 = a, b2 = b;
+  const std::string name = MakeLayout(a, b).WeightsBankName();
+  EXPECT_FALSE(name.empty());
+  EXPECT_EQ(name, MakeLayout(a2, b2).WeightsBankName());
+}
+
+TEST(PoolLayoutWeightsBankNameTest, DifferentContentYieldsDifferentName) {
+  const std::vector<uint8_t> a = {1, 2, 3}, b = {4, 5}, c = {4, 6};
+  EXPECT_NE(MakeLayout(a, b).WeightsBankName(),
+            MakeLayout(a, c).WeightsBankName());
+}
+
 }  // namespace
 }  // namespace openvino
 }  // namespace litert

@@ -202,7 +202,9 @@ litert_lib(
         ":weight_bank",
         ":weight_bank_attributes",
         "//litert/c/internal:litert_logging",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@farmhash_archive//:farmhash",
         "@intel_openvino//:openvino",
     ],
 )

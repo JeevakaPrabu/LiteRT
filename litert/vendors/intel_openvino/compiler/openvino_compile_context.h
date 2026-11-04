@@ -55,7 +55,17 @@ class OpenVinoCompileContext {
   // |moe_multi_token_chunk| (from OptimizeModel's result) selects the NPUW
   // pipeline: a multi-token chunk gets the host-router/REP pipeline, a
   // single-token one gets the plain CWAI pipeline.
-  void ConfigureForNpuWeightSharing(bool moe_multi_token_chunk);
+  //
+  // |weights_bank_name| names the NPUW weights bank baked into the blob. It
+  // MUST be unique per distinct weight pool: NPUW's BankManager is a global
+  // singleton keyed by this name, so two compiled models that bake the same
+  // name resolve to the SAME in-memory bank at import time. That makes the
+  // second model's deserialization collide on already-registered uids and
+  // hard-assert in NPUW's weights bank. A content-derived name lets partitions
+  // that genuinely share a pool dedup, while isolating unrelated models. If
+  // empty, falls back to the legacy fixed name "shared" (logged as a warning).
+  void ConfigureForNpuWeightSharing(const std::string& weights_bank_name,
+                                    bool moe_multi_token_chunk);
 
   // Classification info OptimizeModel()'s NPU passes produced, beyond the
   // in-place graph mutation, that ConfigureForNpuWeightSharing() needs.

@@ -25,7 +25,9 @@
 #include <utility>
 #include <vector>
 
+#include "absl/strings/str_format.h"  // from @com_google_absl
 #include "absl/types/span.h"  // from @com_google_absl
+#include "farmhash.h"
 #include "litert/c/internal/litert_logging.h"
 #include "litert/vendors/intel_openvino/compiler/weight_bank.h"
 #include "litert/vendors/intel_openvino/compiler/weight_bank_attributes.h"
@@ -43,6 +45,24 @@ std::map<int32_t, size_t> PoolLayout::OffsetMap() const {
     offsets.emplace(entry.buffer_id, entry.pool_offset);
   }
   return offsets;
+}
+
+std::string PoolLayout::WeightsBankName() const {
+  if (buffers.empty()) return "";
+  // Each buffer is fingerprinted in place (no copy of the pool); the
+  // (buffer_id, fingerprint) pairs, in the pool's ascending-id order, are then
+  // fingerprinted once more into a single value.
+  std::vector<uint64_t> per_buffer;
+  per_buffer.reserve(2 * buffers.size());
+  for (const auto& entry : buffers) {
+    per_buffer.push_back(static_cast<uint64_t>(entry.buffer_id));
+    per_buffer.push_back(util::Fingerprint64(
+        reinterpret_cast<const char*>(entry.bytes.data()), entry.bytes.size()));
+  }
+  const uint64_t pool_fingerprint = util::Fingerprint64(
+      reinterpret_cast<const char*>(per_buffer.data()),
+      per_buffer.size() * sizeof(uint64_t));
+  return absl::StrFormat("litert_npuw_%016x", pool_fingerprint);
 }
 
 void HarvestSharedConstants(const std::shared_ptr<ov::Model>& ov_model,
