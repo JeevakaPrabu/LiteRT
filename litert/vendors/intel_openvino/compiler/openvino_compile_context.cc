@@ -206,22 +206,35 @@ void OpenVinoCompileContext::ConfigureForNpuWeightSharing(
   if (device_ != "NPU") return;
   // NPUW private properties, set by literal key because
   // npuw_private_properties.hpp is not shipped in the runtime SDK.
-  configs_map_["NPU_USE_NPUW"] = "YES";
-  configs_map_["NPUW_DEVICES"] = "NPU";
-  configs_map_["NPUW_WEIGHTS_BANK"] = "shared";
-  configs_map_["NPUW_FUNCALL_FOR_ALL"] = "YES";
+  // Each knob is only a default: a value already supplied through the Intel
+  // OpenVINO configs map is kept.
+  auto set_default_if_not_set = [&](const char* key, const char* default_val) {
+    const auto it = configs_map_.find(key);
+    if (it == configs_map_.end()) {
+      configs_map_[key] = default_val;
+    } else {
+      LITERT_LOG(LITERT_INFO,
+                 "NPU weight sharing: keeping client-supplied %s = %s "
+                 "(default would be %s)",
+                 key, it->second.as<std::string>().c_str(), default_val);
+    }
+  };
+  set_default_if_not_set("NPU_USE_NPUW", "YES");
+  set_default_if_not_set("NPUW_DEVICES", "NPU");
+  set_default_if_not_set("NPUW_WEIGHTS_BANK", "shared");
+  set_default_if_not_set("NPUW_FUNCALL_FOR_ALL", "YES");
 
   if (moe_multi_token_chunk) {
-    configs_map_["NPUW_ONLINE_PIPELINE"] = "REP";
-    configs_map_["NPUW_UNFOLD_IREQS"] = "NO";
-    configs_map_["NPUW_ONLINE_ISOLATE"] = "ATTN,MOE";
-    configs_map_["NPUW_MOE_TOKEN_CHUNK_SIZE"] = "0";
-    configs_map_["NPUW_ONLINE_KEEP_BLOCK_SIZE"] = "4";
-    configs_map_["NPUW_FOLD"] = "YES";
-    configs_map_["NPUW_ONLINE_KEEP_BLOCKS"] = "3";
+    set_default_if_not_set("NPUW_ONLINE_PIPELINE", "REP");
+    set_default_if_not_set("NPUW_UNFOLD_IREQS", "NO");
+    set_default_if_not_set("NPUW_ONLINE_ISOLATE", "ATTN,MOE");
+    set_default_if_not_set("NPUW_MOE_TOKEN_CHUNK_SIZE", "0");
+    set_default_if_not_set("NPUW_ONLINE_KEEP_BLOCK_SIZE", "4");
+    set_default_if_not_set("NPUW_FOLD", "YES");
+    set_default_if_not_set("NPUW_ONLINE_KEEP_BLOCKS", "3");
   } else {
-    configs_map_["NPUW_ONLINE_PIPELINE"] = "NONE";
-    configs_map_["NPUW_CWAI"] = "YES";
+    set_default_if_not_set("NPUW_ONLINE_PIPELINE", "NONE");
+    set_default_if_not_set("NPUW_CWAI", "YES");
   }
 
   LITERT_LOG(LITERT_INFO,
